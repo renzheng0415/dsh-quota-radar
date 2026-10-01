@@ -1,0 +1,7 @@
+# dsh-quota-radar bundle patch：把余额雷达插件挂载进 DSH 配置树。
+#
+# host 半边是包根导出（./dsh/index.js）；
+# client 半边由 package.json 的 dsh.client manifest 声明的 ./client 导出加载。
+- insert:
+    - id: quota-radar
+      name: dsh-quota-radar

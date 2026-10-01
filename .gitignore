@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+*.tgz
+
+# 测试工具留下的临时目录
+.mutation-backup/
+
+# 编辑器 / 系统
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# 本地密钥与凭据 —— 绝不入库
+.env
+.env.*
+*.credentials.yaml
+credentials.yaml

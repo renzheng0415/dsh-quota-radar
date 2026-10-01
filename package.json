@@ -1,0 +1,51 @@
+{
+  "name": "dsh-quota-radar",
+  "version": "0.2.0",
+  "description": "模型余额雷达：在 DSH 对话框下方显示当前模型的余额/额度，跟随模型自动切换。公开接口支持 DeepSeek、Kimi、Kimi Code、智谱 GLM、OpenRouter、硅基流动、MiniMax、阶跃星辰、OpenCode Go、xAI；另有 Ark、WorkBuddy、OpenCodex 本机通路（端点可配置）。中英双语。",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis-plugin",
+    "deepseek-harness",
+    "quota",
+    "balance",
+    "usage"
+  ],
+  "files": [
+    "dsh",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "default": "./dsh/index.js"
+    },
+    "./client": {
+      "default": "./dsh/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-host-webserver": ">=0.2.0-rc.1 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    }
+  }
+}
