@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const hostSource = await readFile(new URL("./dsh/index.js", import.meta.url), "utf8");
@@ -1140,16 +1141,23 @@ function stateFixture(id, label, routes, extra = {}) {
 }
 
 /** 真正挂载前端组件并等异步状态落地。 */
-async function renderWith(payload, { route = "ark", documentStub, lang = "zh-CN" } = {}) {
+async function renderWith(payload, { route = "ark", documentStub, lang = "zh-CN", htmlLang, navLang } = {}) {
   const originalFetch = globalThis.fetch;
   const originalDoc = globalThis.document;
   const originalNav = globalThis.navigator;
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => payload });
-  globalThis.document = documentStub ?? { hidden: false, addEventListener() {}, removeEventListener() {} };
+  // 宿主把语言写在 document.documentElement.lang 上，这是最权威的信号。
+  // htmlLang 单独可配，用来构造「系统语言与 DSH 语言不一致」的场景。
+  globalThis.document = documentStub ?? {
+    hidden: false,
+    addEventListener() {},
+    removeEventListener() {},
+    documentElement: { lang: htmlLang ?? lang },
+  };
   // 语言必须显式指定。Node 自带 navigator.language = "en-US"，
   // 不固定住的话断言中文的测试会随宿主环境飘。
   Object.defineProperty(globalThis, "navigator", {
-    value: { language: lang },
+    value: { language: navLang ?? lang },
     configurable: true,
     writable: true,
   });
@@ -2082,5 +2090,116 @@ test("字段名有两个来源时都认（接口改名不会静默失效）", as
     const st = await a.fetch({}, deps);
     assert.equal(st.status, "ok", `硅基流动用 ${field} 时应能解析`);
     assert.equal(st.balance.amount, 3.25, `硅基流动 ${field} 数值应正确`);
+  }
+});
+
+
+// ===============================================================
+// 回归：i18n 取词函数被局部变量遮蔽
+//
+// 真实事故：resetText 里写了 `const t = Date.parse(iso)`，
+// 把外层的 i18n t() 覆盖掉，随后 `t("reset.soon")` 抛
+// "t is not a function"，整个组件崩掉、读数整行消失。
+// 触发条件很隐蔽：只有当某个窗口带 resetsAt 时才走到那行。
+// ===============================================================
+
+test("带重置时间的窗口不会让组件崩掉（i18n 取词函数不被遮蔽）", async () => {
+  const future = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], {
+        windows: [
+          { label: "5h", usedPercent: 20, resetsAt: future },
+          { label: "本周", usedPercent: 60, resetsAt: future },
+        ],
+      }),
+    ],
+    registered: ["ark"],
+  });
+  const env = await renderWith(payload, { route: "ark" });
+  try {
+    assert.notEqual(env.tree, null, "有重置时间时也必须渲染出来，不能整行消失");
+    const text = textOf(env.tree);
+    assert.match(text, /剩余/, `应有读数，实际: ${text}`);
+    assert.match(text, /后重置/, `应显示重置倒计时，实际: ${text}`);
+  } finally {
+    env.restore();
+    env.restoreNavigator();
+  }
+});
+
+test("重置时间已过期时也不崩（走的是另一条 t() 分支）", async () => {
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], {
+        windows: [{ label: "5h", usedPercent: 20, resetsAt: past }],
+      }),
+    ],
+    registered: ["ark"],
+  });
+  const env = await renderWith(payload, { route: "ark" });
+  try {
+    assert.notEqual(env.tree, null);
+    assert.match(textOf(env.tree), /即将重置/, "过期应显示「即将重置」");
+  } finally {
+    env.restore();
+    env.restoreNavigator();
+  }
+});
+
+// ===============================================================
+// 语言判定必须看宿主，不只看浏览器
+//
+// 真实事故：系统语言是英文、DSH 界面是中文的用户，
+// 整个插件变成了英文 —— 界面里唯一一块非中文，非常突兀。
+// 根因：只读了 navigator.language，没读宿主写在
+// document.documentElement.lang 上的真实界面语言。
+// ===============================================================
+
+test("系统英文 + DSH 中文 → 插件必须是中文（宿主优先）", async () => {
+  const payload = snapshotPayload({
+    providers: [stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "本周", usedPercent: 60 }] })],
+    registered: ["ark"],
+  });
+  // 这是用户真实遇到的组合：浏览器英文，DSH 中文
+  const env = await renderWith(payload, { route: "ark", htmlLang: "zh-CN", navLang: "en-US" });
+  try {
+    const text = textOf(env.tree);
+    assert.match(text, /剩余/, `DSH 是中文就该显示中文，实际: ${text}`);
+    assert.doesNotMatch(text, /left/i, `不该因为浏览器是英文就切成英文，实际: ${text}`);
+  } finally {
+    env.restore();
+    env.restoreNavigator();
+  }
+});
+
+test("系统中文 + DSH 英文 → 插件必须跟随 DSH 显示英文", async () => {
+  const payload = snapshotPayload({
+    providers: [stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "本周", usedPercent: 60 }] })],
+    registered: ["ark"],
+  });
+  const env = await renderWith(payload, { route: "ark", htmlLang: "en", navLang: "zh-CN" });
+  try {
+    const text = textOf(env.tree);
+    assert.match(text, /left/i, `DSH 是英文就该显示英文，实际: ${text}`);
+    assert.doesNotMatch(text, /剩余/, `不该因为浏览器是中文就切成中文，实际: ${text}`);
+  } finally {
+    env.restore();
+    env.restoreNavigator();
+  }
+});
+
+test("宿主没给 lang 时才退回浏览器语言", async () => {
+  const payload = snapshotPayload({
+    providers: [stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "本周", usedPercent: 60 }] })],
+    registered: ["ark"],
+  });
+  const env = await renderWith(payload, { route: "ark", htmlLang: "", navLang: "en-US" });
+  try {
+    assert.match(textOf(env.tree), /left/i, "宿主没标语言时应看浏览器");
+  } finally {
+    env.restore();
+    env.restoreNavigator();
   }
 });

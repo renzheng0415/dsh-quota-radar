@@ -240,6 +240,32 @@ const mutations = [
     testPattern: "未核实的通路必须带 unverified",
   },
   {
+    name: "语言判定忽略宿主、只看浏览器（系统英文就变英文）",
+    file: CLIENT,
+    find: `      // 1) 宿主页面语言（最权威）
+      try {
+        if (typeof document !== "undefined" && document.documentElement) {
+          const htmlLang = String(document.documentElement.lang || "").toLowerCase();
+          if (htmlLang) return htmlLang.startsWith("zh") ? "zh" : "en";
+        }
+      } catch {
+        // document 不可用
+      }
+`,
+    replace: "",
+    // ⚠️ pattern 当正则用。`+` 是量词，写成「系统英文 + DSH 中文」会
+    // 匹配不到任何测试 → Node 回退跑整个文件 → 文件级测试永远通过，
+    // 于是把有效的测试误报成「假通过」。用不含元字符的片段。
+    testPattern: "宿主优先",
+  },
+  {
+    name: "局部变量遮蔽 i18n 取词函数（组件会崩、整行消失）",
+    file: CLIENT,
+    find: '      const parsed = Date.parse(iso);\n      if (isNaN(parsed)) return "";\n      const ms = parsed - Date.now();',
+    replace: '      const t = Date.parse(iso);\n      if (isNaN(t)) return "";\n      const ms = t - Date.now();',
+    testPattern: "带重置时间的窗口不会让组件崩掉",
+  },
+  {
     name: "英文界面漏翻（中文词条直接漏给英文用户）",
     file: CLIENT,
     find: '        "panel.unsupported": "Quota unavailable",',
@@ -249,9 +275,18 @@ const mutations = [
   {
     name: "语言判定永远返回中文（英文用户看到中文）",
     file: CLIENT,
-    find: '          return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";',
-    replace: '          return "zh";',
-    testPattern: "英文环境下界面全英文",
+    // 直接打掉「浏览器语言」分支：宿主没标语言时会退回中文
+    find: `      // 2) 浏览器语言（兜底）
+      try {
+        if (typeof navigator !== "undefined" && typeof navigator.language === "string") {
+          return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+        }
+      } catch {
+        // navigator 不可用
+      }
+`,
+    replace: "",
+    testPattern: "宿主没给 lang 时才退回浏览器语言",
   },
   {
     name: "窗口标签不做英文本地化",
@@ -338,8 +373,17 @@ async function runPattern(pattern) {
     return { output: stdout + stderr, failed: false };
   } catch (error) {
     const timedOut = error.killed === true || error.signal === "SIGKILL";
+    // ⚠️ 这里必须同时取 error.stdout 和 error.output。
+    //
+    // node:child_process 在「非零退出」时把子进程输出挂在 error.output 上，
+    // 而 error.stdout 往往是空字符串。曾经只读 error.stdout，导致失败路径
+    // 的 output 恒为空 → 解析不出 ℹ pass/ℹ fail → 计数是 undefined →
+    // 掉进 WEAK 分支，把**本来有效的测试**误报成「假通过」。
+    // 这个 bug 让 2 条语言判定的变异体长期显示假通过。
+    const out = error.stdout ?? error.output?.[1] ?? "";
+    const err = error.stderr ?? error.output?.[2] ?? "";
     return {
-      output: (error.stdout ?? "") + (error.stderr ?? ""),
+      output: out + err,
       failed: true,
       timedOut,
     };

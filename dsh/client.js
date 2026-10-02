@@ -122,8 +122,28 @@ window.__ModuleLoader__.load({
 
     let currentLang = null;
 
+    /**
+     * 语言判定。
+     *
+     * 顺序很重要：**必须先看宿主自己的语言设置**。
+     * DSH 把当前语言写在 document.documentElement.lang 上
+     * （宿主源码 syncDocumentLanguage：snapshot.active === "zh" ? "zh-CN" : active）。
+     *
+     * 曾经只用 navigator.language，结果系统语言是英文、DSH 界面是中文的用户
+     * 会看到整个插件变成英文——界面里唯一一块非中文，非常突兀。
+     */
     function detectLang() {
       if (currentLang) return currentLang;
+      // 1) 宿主页面语言（最权威）
+      try {
+        if (typeof document !== "undefined" && document.documentElement) {
+          const htmlLang = String(document.documentElement.lang || "").toLowerCase();
+          if (htmlLang) return htmlLang.startsWith("zh") ? "zh" : "en";
+        }
+      } catch {
+        // document 不可用
+      }
+      // 2) 浏览器语言（兜底）
       try {
         if (typeof navigator !== "undefined" && typeof navigator.language === "string") {
           return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -131,6 +151,7 @@ window.__ModuleLoader__.load({
       } catch {
         // navigator 不可用
       }
+      // 3) 都没有 → 中文（本插件以中文为主）
       return "zh";
     }
 
@@ -243,9 +264,12 @@ window.__ModuleLoader__.load({
 
     function resetText(iso) {
       if (!iso) return "";
-      const t = Date.parse(iso);
-      if (isNaN(t)) return "";
-      const ms = t - Date.now();
+      // 变量名不能叫 t —— 会把外层的 i18n 取词函数 t() 覆盖掉，
+      // 后面 t("reset.soon") 就会抛 "t is not a function"，
+      // 整个组件崩掉、读数整行消失。曾真实发生过。
+      const parsed = Date.parse(iso);
+      if (isNaN(parsed)) return "";
+      const ms = parsed - Date.now();
       if (ms <= 0) return t("reset.soon");
       const min = Math.floor(ms / 60000);
       const h = Math.floor(min / 60);
