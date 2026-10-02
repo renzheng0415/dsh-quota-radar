@@ -207,6 +207,7 @@ window.__ModuleLoader__.load({
       "workbuddy", // WorkBuddy 国内版
       "workbuddy-global", // WorkBuddy 国际版
       "ark", // 火山方舟 Ark
+      "woyaopro", // 第三方中转站（WoYaoPro）
     ];
 
     function orderedForPanel(providers) {
@@ -351,10 +352,29 @@ window.__ModuleLoader__.load({
       }
       if (state.balance) lines.push(`余额：${state.balance.display}`);
       const d = state.detail ?? {};
+      // 适配器给的说明。双语对象按当前语言取词。
+      //
+      // 这段曾经只认 unitNote/partialNote 那几个字段，而各通路大量产出的
+      // 是 note / noteParts —— 结果 Kimi、OpenRouter、中转站的
+      // 「已用 / 总额度」这类说明生成了却永远不显示。三种写法都要认。
+      const sayNote = (n) => {
+        if (!n) return null;
+        if (typeof n === "string") return n;
+        return n[currentLang] ?? n.zh ?? n.en ?? null;
+      };
+      for (const n of Array.isArray(d.noteParts) ? d.noteParts : []) {
+        const txt = sayNote(n);
+        if (txt) lines.push(`说明：${txt}`);
+      }
+      const single = sayNote(d.note);
+      if (single) lines.push(`说明：${single}`);
       if (d.unitNote) lines.push(`说明：${d.unitNote}`);
       if (d.aggregationNote) lines.push(`说明：${d.aggregationNote}`);
       if (d.partialNote) lines.push(`注意：${d.partialNote}`);
       if (d.bindingNote) lines.push(`注意：${d.bindingNote}`);
+      if (d.unverified) lines.push("注意：该接口未经真实凭据核实，数值可能不准");
+      if (d.unofficial) lines.push("注意：非厂商官方文档接口");
+      if (d.thirdParty) lines.push("注意：第三方中转站，非模型厂商官方接口");
       if (Array.isArray(state.routes) && state.routes.length > 0) {
         lines.push(`对应接入：${state.routes.join(", ")}`);
       }

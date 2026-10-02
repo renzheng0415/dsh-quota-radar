@@ -1238,6 +1238,38 @@ test("前端显示当前模型的读数，并把账号归属提醒真正渲染�
   }
 });
 
+test("适配器给的说明文字要真的渲染进 tooltip（noteParts 曾经全被丢弃）", async () => {
+  // 同一类 bug 的第二次出现：数据里写了说明，界面从不显示。
+  // 上一版修了 unitNote/bindingNote，但各通路大量产出的是 note / noteParts，
+  // 仍然被丢掉——Kimi、OpenRouter、中转站的「已用 / 总额度」全都看不见。
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("woyaopro", "WoYaoPro", ["woyaopro"], {
+        balance: { amount: 487.12, currency: "USD", display: "$487.12" },
+        detail: {
+          source: "relay",
+          thirdParty: true,
+          noteParts: [
+            { zh: "已用 $712.88 / 总额度 $1200.00", en: "used $712.88 of $1200.00" },
+            { zh: "今日 $0.19", en: "today $0.19" },
+          ],
+        },
+      }),
+    ],
+  });
+  const env = await renderWith(payload, { route: "woyaopro", lang: "zh-CN" });
+  try {
+    const main = findAll(env.tree, byAttr("data-qr-main"));
+    assert.equal(main.length, 1, "应渲染出主读数行");
+    assert.match(textOf(main[0]), /\$487\.12/, "余额应显示出来");
+    assert.match(main[0].props.title, /已用 \$712\.88/, "noteParts 必须渲染进 tooltip");
+    assert.match(main[0].props.title, /今日 \$0\.19/);
+    assert.match(main[0].props.title, /第三方中转站/, "thirdParty 标记必须渲染");
+  } finally {
+    env.restore();
+  }
+});
+
 test("只显示当前选中的那个模型，不摊开全部服务", async () => {
   const payload = snapshotPayload({
     providers: [
@@ -2024,6 +2056,68 @@ test("硅基流动：解析 totalBalance，并标注充值余额", async () => {
   assert.equal(st.balance.currency, "CNY");
   assert.match(st.detail.note.zh, /充值/);
   assert.match(calls[0].url, /siliconflow\.cn/, "国内站优先");
+});
+
+test("中转站：解析预充值额度（quota.limit/used/remaining）", async () => {
+  const { byId } = await loadPublicAdapters();
+  const a = byId("woyaopro");
+  const { deps, calls } = makeAdapterDeps({
+    respond: () => ({
+      quota: { limit: 1200, used: 712.87712358, remaining: 487.12287642, unit: "USD" },
+      remaining: 487.12287642,
+      status: "active",
+      unit: "USD",
+      mode: "quota_limited",
+      isValid: true,
+      usage: { today: { actual_cost: 0.19478012, cost: 0.2017025 } },
+    }),
+  });
+  const st = await a.fetch({}, deps);
+  assert.equal(st.status, "ok");
+  assert.equal(st.balance.display, "$487.12");
+  assert.equal(st.balance.currency, "USD");
+  // quota 是「预充值总额度」，不是时间窗——不该冒出一个假窗口
+  assert.deepEqual(st.windows, [], "预充值额度不该被当成时间窗");
+  assert.match(calls[0].url, /iiiiitoken\.com/, `实际请求: ${calls[0].url}`);
+  // 光一个 $487.12 没法判断用了多少，必须说清「已用 / 总额度」
+  const zh = st.detail.noteParts.map((p) => p.zh).join(" | ");
+  assert.match(zh, /已用 \$712\.88/);
+  assert.match(zh, /总额度 \$1200\.00/);
+  assert.match(zh, /今日 \$0\.19/);
+});
+
+test("中转站：quota 缺失时用顶层 remaining 兜底（接口改版不静默失效）", async () => {
+  const { byId } = await loadPublicAdapters();
+  const a = byId("woyaopro");
+  const { deps } = makeAdapterDeps({ respond: () => ({ remaining: 12.5, unit: "CNY" }) });
+  const st = await a.fetch({}, deps);
+  assert.equal(st.status, "ok");
+  assert.equal(st.balance.amount, 12.5);
+  assert.equal(st.balance.currency, "CNY");
+  assert.equal(st.balance.display, "¥12.50");
+});
+
+test("中转站端点可配置：换网关不用改代码", async () => {
+  const { byId } = await loadPublicAdapters();
+  const a = byId("woyaopro");
+  const { deps, calls } = makeAdapterDeps({ respond: () => ({ remaining: 5 }) });
+  const st = await a.fetch({}, { ...deps, endpoints: { woyaopro: "https://my-relay.example/v1/usage" } });
+  assert.equal(st.status, "ok");
+  assert.equal(calls[0].url, "https://my-relay.example/v1/usage", "config.endpoints 应覆盖内置地址");
+});
+
+test("第三方中转站要标出来源性质，不冒充厂商官方接口", async () => {
+  const { byId, CATALOG } = await loadPublicAdapters();
+  const a = byId("woyaopro");
+  const { deps } = makeAdapterDeps({ respond: () => ({ remaining: 1 }) });
+  const st = await a.fetch({}, deps);
+  assert.equal(st.detail.thirdParty, true, "中转站必须带 thirdParty 标记");
+  // 没标 thirdParty 的通路不该被误标
+  const plain = byId("deepseek");
+  const r2 = makeAdapterDeps({ respond: () => ({ balance_infos: [{ currency: "CNY", total_balance: 1 }] }) });
+  const st2 = await plain.fetch({}, r2.deps);
+  assert.notEqual(st2.detail.thirdParty, true, "官方通路不该被标成第三方");
+  assert.ok(CATALOG.some((c) => c.thirdParty === true), "通路表里应能看到 thirdParty 声明");
 });
 
 test("未核实的通路必须带 unverified 标记（不假装可信）", async () => {

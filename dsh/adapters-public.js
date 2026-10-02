@@ -254,6 +254,54 @@ const PARSERS = {
     if (windows.length === 0) return null;
     return { windows, detail: { source: "opencode.ai" } };
   },
+
+  /**
+   * 中转站 / 商用网关额度（OpenAI 兼容的预充值网关）。
+   *
+   * 结构（实测自 woyaopro 中转站 api.iiiiitoken.com/v1/usage）：
+   *   { quota:{ limit, used, remaining, unit }, remaining, unit,
+   *     status, mode, isValid,
+   *     usage:{ today:{ actual_cost, … }, rpm, average_duration_ms },
+   *     daily_usage:[…], model_stats:[…] }
+   *
+   * 注意 `quota` 是**预充值总额度**，不是时间窗——所以出余额（money），
+   * 不出 windows。这一点容易搞混：`remaining` 在顶层也有一份，两个都认。
+   */
+  "relay-quota-usage"(body) {
+    if (!body || typeof body !== "object") return null;
+    const q = body.quota && typeof body.quota === "object" ? body.quota : {};
+    const remaining = num(q.remaining) ?? num(body.remaining);
+    if (remaining === undefined) return null;
+
+    const unit = typeof q.unit === "string" ? q.unit : typeof body.unit === "string" ? body.unit : "USD";
+    const sign = unit === "CNY" ? "¥" : "$";
+    const limit = num(q.limit);
+    const used = num(q.used) ?? (limit === undefined ? undefined : limit - remaining);
+
+    const parts = [];
+    if (limit !== undefined && used !== undefined) {
+      parts.push(
+        note(
+          `已用 ${sign}${used.toFixed(2)} / 总额度 ${sign}${limit.toFixed(2)}`,
+          `used ${sign}${used.toFixed(2)} of ${sign}${limit.toFixed(2)}`,
+        ),
+      );
+    }
+    const today = body.usage && body.usage.today;
+    const todayCost = num(today && (today.actual_cost ?? today.cost));
+    if (todayCost !== undefined) {
+      parts.push(note(`今日 ${sign}${todayCost.toFixed(2)}`, `today ${sign}${todayCost.toFixed(2)}`));
+    }
+    // 网关自报状态：非 active 通常意味着被停用/欠费，得让用户看见
+    if (typeof body.status === "string" && body.status !== "active") {
+      parts.push(note(`账号状态 ${body.status}`, `account ${body.status}`));
+    }
+
+    return {
+      balance: money(remaining, unit),
+      detail: { source: "relay", noteParts: parts },
+    };
+  },
 };
 
 /** 面板里给「用户自定义通路」选的解析格式。 */
@@ -265,6 +313,7 @@ export const CUSTOM_FORMATS = [
   "stepfun-accounts",
   "zai-coding",
   "opencode-usage",
+  "relay-quota-usage",
 ];
 
 // ============================================================
@@ -362,6 +411,18 @@ export const CATALOG = [
     endpoint: "https://opencode.ai/zen/go/v1/usage",
     format: "opencode-usage",
   },
+  {
+    // 第三方中转站，不是模型厂商官方接口。
+    // 端点用 deps.endpoints.woyaopro 可覆盖（见 makeAdapter），
+    // 换自家网关时不用改代码。
+    id: "woyaopro",
+    label: "WoYaoPro",
+    providers: ["woyaopro", "iiiiitoken"],
+    keyRefs: ["WOYAOPRO_API_KEY"],
+    endpoint: "https://api.iiiiitoken.com/v1/usage",
+    format: "relay-quota-usage",
+    thirdParty: true,
+  },
 ];
 
 // ============================================================
@@ -370,7 +431,6 @@ export const CATALOG = [
 
 /** 把一条通路变成 host 认得的适配器对象。 */
 export function makeAdapter(entry) {
-  const urls = [entry.endpoint, ...(entry.endpointFallbacks ?? [])];
   return {
     id: entry.id,
     label: entry.label,
@@ -378,6 +438,10 @@ export function makeAdapter(entry) {
     credentialRefs: entry.keyRefs,
     unverified: entry.unverified === true,
     async fetch(ctx, deps = {}) {
+      // 通路地址可被 config.endpoints.<id> 覆盖。
+      // 中转站域名因人而异，不改代码就能换到自己的网关。
+      const override = deps.endpoints && deps.endpoints[entry.id];
+      const urls = [override || entry.endpoint, ...(entry.endpointFallbacks ?? [])];
       const key = await deps.resolveKey?.(ctx, entry.keyRefs);
       if (key === deps.CREDENTIALS_UNAVAILABLE) {
         return deps.stateBad(entry.id, entry.label, "error", "凭据服务尚未就绪，稍后自动重试");
@@ -435,6 +499,7 @@ export function makeAdapter(entry) {
               detail: {
                 ...detail,
                 unverified: entry.unverified === true || detail.unverified === true,
+                thirdParty: entry.thirdParty === true || detail.thirdParty === true,
               },
             });
           } catch (e) {

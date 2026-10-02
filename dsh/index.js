@@ -872,6 +872,8 @@ export function apply(ctx, config) {
     ark: config?.endpoints?.ark,
     opencodeGo: config?.endpoints?.opencodeGo,
     opencodex: config?.endpoints?.opencodex,
+    // 中转站域名因人而异，允许用户覆盖（不改代码换网关）
+    woyaopro: config?.endpoints?.woyaopro,
   };
   // 适配器依赖束。公开适配器（adapters-public.js）只通过这些注入的
   // 原语做事，不直接 import index.js 的内部函数——这样它们可以独立测试，

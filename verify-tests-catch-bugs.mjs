@@ -358,6 +358,35 @@ const mutations = [
     replace: '    const remain = total;',
     testPattern: "余额 = 总额度 - 已用",
   },
+  {
+    name: "中转站把预充值额度当成时间窗",
+    file: PUBLIC,
+    find: '      balance: money(remaining, unit),\n      detail: { source: "relay", noteParts: parts },',
+    replace:
+      '      balance: money(remaining, unit),\n      windows: [win("总额度", 50)],\n      detail: { source: "relay", noteParts: parts },',
+    testPattern: "解析预充值额度",
+  },
+  {
+    name: "中转站端点覆盖被忽略（换网关失效）",
+    file: PUBLIC,
+    find: '      const override = deps.endpoints && deps.endpoints[entry.id];',
+    replace: '      const override = null;',
+    testPattern: "换网关不用改代码",
+  },
+  {
+    name: "中转站不标来源性质（冒充厂商官方接口）",
+    file: PUBLIC,
+    find: '                thirdParty: entry.thirdParty === true || detail.thirdParty === true,',
+    replace: '                thirdParty: false,',
+    testPattern: "不冒充厂商官方接口",
+  },
+  {
+    name: "tooltip 丢掉 noteParts（说明生成了却不显示）",
+    file: CLIENT,
+    find: '      for (const n of Array.isArray(d.noteParts) ? d.noteParts : []) {\n        const txt = sayNote(n);\n        if (txt) lines.push(`说明：${txt}`);\n      }\n',
+    replace: "",
+    testPattern: "noteParts 曾经全被丢弃",
+  },
 ];
 
 async function runPattern(pattern) {
