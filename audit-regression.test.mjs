@@ -195,8 +195,9 @@ test("Ark 适配器把 registry 的取消信号传给 fetch，卸载后该请求
  */
 function mountReadout({ models, timer, props = {} }) {
   const hooks = [];
+  const refs = [];
   const cleanups = [];
-  const effectsRun = new Set();
+  const effectDeps = [];
   let cursor = 0;
   let pending = false;
 
@@ -213,20 +214,55 @@ function mountReadout({ models, timer, props = {} }) {
       };
       return [hooks[i], set];
     },
-    useEffect(fn) {
+    useRef(init) {
       const i = cursor++;
-      if (!effectsRun.has(i)) {
-        effectsRun.add(i);
-        const c = fn();
-        if (typeof c === "function") cleanups[i] = c;
-      }
+      if (!(i in refs)) refs[i] = { current: init };
+      return refs[i];
+    },
+    /**
+     * useEffect 必须支持依赖数组。
+     *
+     * 老实现「每个 hook 下标只跑一次」，遇到依赖变化要重跑的 effect
+     * （例如「面板打开时才注册 document 监听」）永远不会执行第二次，
+     * 测试会以为行为没发生。这里按 React 语义做浅比较。
+     * 不传依赖数组 → 仍然只跑一次。
+     */
+    useEffect(fn, deps) {
+      const i = cursor++;
+      const prev = effectDeps[i];
+      const shouldRun =
+        prev === undefined ||
+        (Array.isArray(deps) &&
+          Array.isArray(prev.deps) &&
+          (deps.length !== prev.deps.length || deps.some((d, k) => !Object.is(d, prev.deps[k]))));
+      if (!shouldRun) return;
+      // 重跑前先清理上一轮，否则监听器会叠加
+      if (prev && typeof prev.cleanup === "function") prev.cleanup();
+      const c = fn();
+      effectDeps[i] = { deps, cleanup: typeof c === "function" ? c : null };
+      cleanups[i] = typeof c === "function" ? c : null;
     },
     createElement(type, props2, ...children) {
-      return {
+      const el = {
         type,
         props: props2 ?? {},
         children: children.flat().filter((c) => c !== null && c !== undefined && c !== false),
+        /**
+         * 极简版 DOM contains。真实节点都有这个方法，宿主用它判断
+         * 「点击是否落在组件内部」。桩里不给的话，组件里
+         * `typeof root.contains === "function"` 恒为假 →
+         * 「点内部不关闭」这条分支永远测不到。
+         */
+        contains(node) {
+          if (node === el) return true;
+          return el.children.some((c) => c && typeof c.contains === "function" && c.contains(node));
+        },
       };
+      // 真实 React 会把 ref.current 指向节点；桩里补上，
+      // 否则 rootRef.current 恒为 null，外部点击判断失效。
+      const ref = props2 && props2.ref;
+      if (ref && typeof ref === "object") ref.current = el;
+      return el;
     },
   };
 
@@ -1265,6 +1301,110 @@ test("适配器给的说明文字要真的渲染进 tooltip（noteParts 曾经�
     assert.match(main[0].props.title, /已用 \$712\.88/, "noteParts 必须渲染进 tooltip");
     assert.match(main[0].props.title, /今日 \$0\.19/);
     assert.match(main[0].props.title, /第三方中转站/, "thirdParty 标记必须渲染");
+  } finally {
+    env.restore();
+  }
+});
+
+test("读数文字统一灰色，不再按用量变金色", async () => {
+  // 用户反馈：Ark 的月度刚好 75.3%、OpenCodex 也过线 → 金色；
+  // DeepSeek / WorkBuddy 只出余额、没有窗口、算作 ok → 灰色。
+  // 同一行里两种颜色，跟宿主统计条的观感不统一。现在必须一律灰色。
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "本月", usedPercent: 80 }] }),
+      stateFixture("deepseek", "DeepSeek", ["deepseek"], {
+        balance: { amount: 4.44, currency: "CNY", display: "¥4.44" },
+      }),
+    ],
+  });
+  for (const route of ["ark", "deepseek"]) {
+    const env = await renderWith(payload, { route });
+    try {
+      const main = findAll(env.tree, byAttr("data-qr-main"));
+      assert.equal(main.length, 1, `${route} 应渲染主读数`);
+      const color = String(main[0].props.style.color);
+      assert.doesNotMatch(
+        color,
+        /warning|danger|d29922|f85149/i,
+        `${route} 不该出现警示色（实际 ${color}）`,
+      );
+      assert.match(color, /text-muted/, `${route} 应该用宿主的次级文字色`);
+    } finally {
+      env.restore();
+    }
+  }
+});
+
+test("用量告警改成文字写进 tooltip（颜色统一后信息不能丢）", async () => {
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "本月", usedPercent: 95 }] }),
+      stateFixture("deepseek", "DeepSeek", ["deepseek"], {
+        balance: { amount: 4.44, currency: "CNY", display: "¥4.44" },
+      }),
+    ],
+  });
+  const env = await renderWith(payload, { route: "ark", lang: "zh-CN" });
+  try {
+    const main = findAll(env.tree, byAttr("data-qr-main"));
+    assert.match(main[0].props.title, /已用超过 90%/, "高用量必须在 tooltip 里说明");
+  } finally {
+    env.restore();
+  }
+});
+
+test("点组件之外收起面板，不用再点回那一行字", async () => {
+  const listeners = { mousedown: [], keydown: [] };
+  const documentStub = {
+    hidden: false,
+    addEventListener(type, fn) {
+      (listeners[type] ??= []).push(fn);
+    },
+    removeEventListener(type, fn) {
+      listeners[type] = (listeners[type] ?? []).filter((f) => f !== fn);
+    },
+    documentElement: { lang: "zh-CN" },
+  };
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "5h", usedPercent: 20 }] }),
+      stateFixture("deepseek", "DeepSeek", ["deepseek"], {
+        balance: { amount: 1, currency: "CNY", display: "¥1.00" },
+      }),
+    ],
+  });
+  const env = await renderWith(payload, { route: "ark", documentStub });
+  try {
+    const main = findAll(env.tree, byAttr("data-qr-main"));
+    assert.equal(findAll(env.tree, byAttr("data-qr-panel")).length, 0, "默认应收起");
+
+    // 点开
+    let tree = await env.click(main[0]);
+    assert.equal(findAll(tree, byAttr("data-qr-panel")).length, 1, "点击后应展开");
+    assert.ok(listeners.mousedown.length > 0, "展开后应注册 document mousedown 监听");
+
+    const fire = (type, ev) => {
+      for (const fn of [...(listeners[type] ?? [])]) fn(ev);
+    };
+
+    // 点组件**内部**（那一行字）不该被外部点击逻辑关掉——
+    // 否则会和 header 自己的 onClick 打架，开合来回抖。
+    //
+    // 注意：重渲染后元素对象是新的（真实 DOM 节点才是复用的），
+    // 所以要拿新树里的节点去点，不能让 rootRef 拿着新树配旧节点。
+    const main2 = findAll(tree, byAttr("data-qr-main"));
+    fire("mousedown", { target: main2[0] });
+    tree = await env.mounted.settle();
+    assert.equal(findAll(tree, byAttr("data-qr-panel")).length, 1, "点内部不该关闭");
+
+    // 点空白处 → 关闭
+    fire("mousedown", { target: { some: "other-element" } });
+    tree = await env.mounted.settle();
+    assert.equal(findAll(tree, byAttr("data-qr-panel")).length, 0, "点外部应收起");
+
+    // 收起后监听器要摘掉，不能留在 document 上
+    assert.equal(listeners.mousedown.length, 0, "收起后应移除监听");
   } finally {
     env.restore();
   }

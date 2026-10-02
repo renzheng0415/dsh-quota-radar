@@ -387,6 +387,28 @@ const mutations = [
     replace: "",
     testPattern: "noteParts 曾经全被丢弃",
   },
+  {
+    name: "读数按用量变金色（跟宿主统计条不统一）",
+    file: CLIENT,
+    find: '      warn: READOUT_COLOR,',
+    replace: '      warn: "var(--dsh-warning, #d29922)",',
+    testPattern: "不再按用量变金色",
+  },
+  {
+    name: "点组件外部不关闭面板（还得点回那一行字）",
+    file: CLIENT,
+    find: '          if (root && target && typeof root.contains === "function" && root.contains(target)) return;\n          setOpen(false);',
+    replace:
+      '          if (root && target && typeof root.contains === "function" && root.contains(target)) return;',
+    testPattern: "不用再点回那一行字",
+  },
+  {
+    name: "外部点击不排除组件内部（点自己会误关）",
+    file: CLIENT,
+    find: '          if (root && target && typeof root.contains === "function" && root.contains(target)) return;\n',
+    replace: "",
+    testPattern: "不用再点回那一行字",
+  },
 ];
 
 async function runPattern(pattern) {

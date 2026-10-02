@@ -279,6 +279,16 @@ window.__ModuleLoader__.load({
       return t("reset.minutes", { n: min });
     }
 
+    /**
+     * 用量语气。仍在算，但**不再用颜色表达**。
+     *
+     * 曾经按用量变色（≥75% 金、≥90% 红）。实际效果：Ark 月度刚到 75.3%、
+     * OpenCodex 也过线，于是这两个是金色，而 DeepSeek / WorkBuddy 只出余额
+     * 没有窗口、算作 ok 是灰色——同一行里两种颜色，跟宿主统计条的观感不统一。
+     *
+     * 现在统一灰色。用量告警不丢：危险/警告写进 hover 详情（见 titleOf），
+     * 只是不再用颜色喊。想恢复配色，只改 TONE_COLOR 一个对象。
+     */
     function toneOf(state) {
       if (!state) return "muted";
       if (state.status !== "ok") return "warn";
@@ -288,11 +298,13 @@ window.__ModuleLoader__.load({
       return "ok";
     }
 
+    // 统一灰色，跟宿主的统计条保持一致。
+    const READOUT_COLOR = "var(--dsh-text-muted, #888)";
     const TONE_COLOR = {
-      ok: "var(--dsh-text-muted, #888)",
-      muted: "var(--dsh-text-muted, #888)",
-      warn: "var(--dsh-warning, #d29922)",
-      danger: "var(--dsh-danger, #f85149)",
+      ok: READOUT_COLOR,
+      muted: READOUT_COLOR,
+      warn: READOUT_COLOR,
+      danger: READOUT_COLOR,
     };
 
     const STATUS_TEXT = {
@@ -375,6 +387,11 @@ window.__ModuleLoader__.load({
       if (d.unverified) lines.push("注意：该接口未经真实凭据核实，数值可能不准");
       if (d.unofficial) lines.push("注意：非厂商官方文档接口");
       if (d.thirdParty) lines.push("注意：第三方中转站，非模型厂商官方接口");
+      // 用量告警改用文字表达：颜色已统一成灰色（见 TONE_COLOR），
+      // 但「快用完了」这件事不能因此消失。
+      const tone = state.status === "ok" ? toneOf(state) : null;
+      if (tone === "danger") lines.push("注意：有额度窗口已用超过 90%，可能即将耗尽");
+      else if (tone === "warn") lines.push("提示：有额度窗口已用超过 75%");
       if (Array.isArray(state.routes) && state.routes.length > 0) {
         lines.push(`对应接入：${state.routes.join(", ")}`);
       }
@@ -389,6 +406,38 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = React.useState(false);
       const models = props.__models;
       const timer = props.__timer;
+      // 组件最外层节点：用来判断一次点击是否落在组件之外
+      const rootRef = React.useRef(null);
+
+      // 点别处就收起面板 —— 不用再点回那一行字。
+      //
+      // · mousedown 而不是 click：click 要等 mouseup，拖选文字时会误触发；
+      //   mousedown 在手按下的瞬间判定，更符合直觉。
+      // · capture 阶段监听：宿主内部若有 stopPropagation，冒泡阶段收不到。
+      // · Escape 也能关，键盘操作不用去够鼠标。
+      React.useEffect(() => {
+        if (!open) return undefined;
+        if (typeof document === "undefined" || typeof document.addEventListener !== "function") {
+          return undefined;
+        }
+        const onDown = (ev) => {
+          const root = rootRef.current;
+          const target = ev && ev.target;
+          // 点在组件内部（那一行字 + 面板本身）不算「别处」，
+          // 否则点 header 会先被这里关掉、再被 onClick 打开，来回抖。
+          if (root && target && typeof root.contains === "function" && root.contains(target)) return;
+          setOpen(false);
+        };
+        const onKey = (ev) => {
+          if (ev && (ev.key === "Escape" || ev.key === "Esc")) setOpen(false);
+        };
+        document.addEventListener("mousedown", onDown, true);
+        document.addEventListener("keydown", onKey, true);
+        return () => {
+          document.removeEventListener("mousedown", onDown, true);
+          document.removeEventListener("keydown", onKey, true);
+        };
+      }, [open]);
 
       // 订阅当前会话的模型选择
       React.useEffect(() => {
@@ -639,7 +688,10 @@ window.__ModuleLoader__.load({
 
       return React.createElement(
         "div",
-        { style: open ? { ...PILL_ROOT_STYLE, position: "relative" } : PILL_ROOT_STYLE },
+        {
+          ref: rootRef,
+          style: open ? { ...PILL_ROOT_STYLE, position: "relative" } : PILL_ROOT_STYLE,
+        },
         header,
         panel,
       );
