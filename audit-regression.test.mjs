@@ -185,6 +185,48 @@ test("Ark 适配器把 registry 的取消信号传给 fetch，卸载后该请求
   }
 });
 
+test("Ark 的悬停说明不暴露本机端口和内部工具名", async () => {
+  // 用户反馈：用 Ark 模型时悬停看到「经 arkcli SSO 获取」这类东西，
+  // 端口号和内部工具名对使用者毫无意义，看着莫名其妙。
+  // 之所以要绕本机一圈，是因为火山官方没有额度接口（实测 404）——
+  // 那是实现细节，不该写到界面上。
+  const core = await loadHost();
+  const f = installFetch(() =>
+    jsonResponse({
+      usage: {
+        rolling: { status: "ok", percent: 10, resetsAt: "2026-10-03T01:00:00+08:00" },
+        weekly: { status: "ok", percent: 20, resetsAt: "2026-10-05T00:00:00+08:00" },
+      },
+    }),
+  );
+  try {
+    const ctx = makeCtx({ providers: ["ark"] });
+    const registry = core.createRegistry(ctx, { getWebPort: () => 19387 });
+    const states = await registry.loadAll(false);
+    const ark = states.find((p) => p && p.provider === "ark");
+    assert.ok(ark, "应拿到 ark 状态");
+    assert.equal(ark.status, "ok", `Ark 应取到数，实际 ${ark.status}: ${ark.message}`);
+
+    // 拼出所有会进界面的字符串（悬停框就是这些）
+    const parts = [
+      ark.message,
+      ark.detail && ark.detail.source,
+      ark.detail && ark.detail.note,
+      ...(((ark.detail && ark.detail.noteParts) || []).map((n) => (n && `${n.zh} ${n.en}`) || "")),
+    ].filter(Boolean);
+    const visible = parts.join(" | ");
+
+    assert.doesNotMatch(
+      visible,
+      /127\.0\.0\.1|localhost|:\d{4,5}\b/,
+      `界面文案里不该出现本机地址或端口：${visible}`,
+    );
+    assert.doesNotMatch(visible, /arkcli|桥接|SSO/i, `界面文案里不该出现内部工具名：${visible}`);
+  } finally {
+    f.restore();
+  }
+});
+
 // ===============================================================
 // P1-2 前端卸载真正中止在途请求
 // ===============================================================

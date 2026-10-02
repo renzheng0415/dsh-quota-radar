@@ -409,6 +409,13 @@ const mutations = [
     replace: "",
     testPattern: "不用再点回那一行字",
   },
+  {
+    name: "Ark 把本机端口和内部工具名写进界面文案",
+    file: HOST,
+    find: '      detail: { source: "volcengine", note: "套餐额度" },',
+    replace: '      detail: { source: "本地桥接 (18901)", note: "经 arkcli SSO 获取" },',
+    testPattern: "悬停说明不暴露",
+  },
 ];
 
 async function runPattern(pattern) {

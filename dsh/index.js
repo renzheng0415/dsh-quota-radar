@@ -249,12 +249,21 @@ const arkAdapter = {
     const url = (deps.endpoints && deps.endpoints.ark) || ARK_BRIDGE;
     const body = await getJson(url, undefined, deps.signal);
     const usage = body && body.usage;
-    if (!usage) return stateBad("ark", "Ark", "error", "桥接返回结构异常");
+    // 错误文案会以「原因：…」出现在悬停里，所以用平实说法，不写内部术语。
+    if (!usage) return stateBad("ark", "Ark", "error", "额度服务返回格式异常");
     const windows = parseUsageWindows(usage);
-    if (windows.length === 0) return stateBad("ark", "Ark", "error", "桥接无可用窗口数据");
+    if (windows.length === 0) return stateBad("ark", "Ark", "error", "没有可用的额度窗口");
+    // 只给对使用者有意义的信息。
+    //
+    // 这里曾经写的是 source「本地桥接 (18901)」+ note「经 arkcli SSO 获取」：
+    // 端口号和内部工具名对用户毫无意义，看着莫名其妙。
+    //
+    // 之所以要绕这一圈，是因为**火山官方没有额度查询接口**
+    // （/api/v3/balance、/api/v3/usage 实测都 404），只能通过账号授权
+    // 读控制面。但那是实现细节，不该写到界面上。
     return stateOk("ark", "Ark", {
       windows,
-      detail: { source: "本地桥接 (18901)", note: "经 arkcli SSO 获取" },
+      detail: { source: "volcengine", note: "套餐额度" },
     });
   },
 };
