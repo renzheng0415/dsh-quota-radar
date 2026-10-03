@@ -46,6 +46,7 @@ const UPSTREAM_STALE_MS = 30 * 60 * 1000;
 const ARK_BRIDGE = "http://127.0.0.1:18901/ark-coding-plan";
 const OPENCODEX_QUOTAS = "http://127.0.0.1:10100/api/provider-quotas";
 const WORKBUDDY_PATH = "/plugins/dsh-connect-workbuddy/usage";
+const FACTORY_QUOTA_PATH = "/api/dsh-factory-provider/quota";
 
 
 export const name = "quota-radar";
@@ -264,6 +265,115 @@ const arkAdapter = {
     return stateOk("ark", "Ark", {
       windows,
       detail: { source: "volcengine", note: "套餐额度" },
+    });
+  },
+};
+
+/**
+ * Factory（Droid）
+ *
+ * DSH 里注册了三条 route：factory-g（Droid Core 模型池）、factory-a（Claude）、
+ * factory-o（GPT）。三条走的是同一个 Factory 订阅账号，额度是**账号级**的，
+ * 所以合并成一行显示——同样三个数字重复三遍没有意义。
+ *
+ * 数据取自连接插件暴露的只读 /quota 路由，它内部读 Factory 官方账单端点
+ * https://api.factory.ai/api/billing/limits。凭据解析、刷新、多账号档案
+ * 全由那个插件负责，本插件不碰 token。
+ */
+const FACTORY_WINDOW_KEYS = [
+  ["fiveHour", "5h"],
+  ["weekly", "本周"],
+  ["monthly", "本月"],
+];
+
+/** 标准池用尽后的溢出策略。只翻译已知值，未知值照原样显示。 */
+const FACTORY_OVERAGE = {
+  droidCore: "标准池用尽后自动走 Droid Core",
+};
+
+/** 一个池里的一个窗口 → 统一窗口形状。缺字段或不是数字就返回 null。 */
+function factoryWindow(pool, key, label, prefix) {
+  const w = pool && pool[key];
+  if (!w || typeof w !== "object") return null;
+  const p = pct(w.usedPercent);
+  if (!p) return null;
+  return {
+    label: prefix + label,
+    usedPercent: p.value,
+    outOfRange: p.outOfRange,
+    rawPercent: p.outOfRange ? p.raw : undefined,
+    resetsAt: typeof w.windowEnd === "string" ? w.windowEnd : null,
+  };
+}
+
+const factoryAdapter = {
+  id: "factory",
+  label: "Factory",
+  providers: ["factory-g", "factory-a", "factory-o"],
+  async fetch(ctx, deps = {}) {
+    const port = deps.getWebPort ? deps.getWebPort() : null;
+    if (!port) return stateBad("factory", "Factory", "error", "宿主 webServer 端口未知");
+    const url = `http://127.0.0.1:${port}${FACTORY_QUOTA_PATH}`;
+    let body;
+    try {
+      body = await getJson(url, undefined, deps.signal);
+    } catch {
+      return stateBad("factory", "Factory", "error", "Factory 额度服务不可达（未安装或未运行）");
+    }
+    if (!body || body.ok !== true || !body.value) {
+      // 上游把原因说得很清楚（未登录、凭据已停用），直接转述。
+      // 笼统写「查询失败」对使用者没有信息量，也没法据此行动。
+      const why =
+        typeof body?.message === "string" && body.message ? sanitizeMessage(body.message) : null;
+      const noCredential = body?.code === "no-credential" || body?.code === "disabled";
+      return stateBad(
+        "factory",
+        "Factory",
+        noCredential ? "unconfigured" : "error",
+        why || "Factory 未返回额度数据",
+      );
+    }
+    const v = body.value;
+
+    // 标准池是所有模型先扣的那一档（Core 模型也走这里），永远是主角。
+    const windows = [];
+    for (const [key, label] of FACTORY_WINDOW_KEYS) {
+      const w = factoryWindow(v.standard, key, label, "");
+      if (w) windows.push(w);
+    }
+    // Core 池是标准耗尽后的免费溢出。没用上时补三行 0% 只会把读数变噪音，
+    // 有实际消耗才显示。
+    const coreUsed = FACTORY_WINDOW_KEYS.some(([key]) => {
+      const n = v.core && v.core[key] ? strictNum(v.core[key].usedPercent) : null;
+      return n !== null && n > 0;
+    });
+    if (coreUsed) {
+      for (const [key, label] of FACTORY_WINDOW_KEYS) {
+        const w = factoryWindow(v.core, key, label, "Core ");
+        if (w) windows.push(w);
+      }
+    }
+    if (windows.length === 0) {
+      return stateBad("factory", "Factory", "error", "额度报告里没有可用窗口");
+    }
+
+    const noteParts = [];
+    const policy = typeof v.overagePreference === "string" ? v.overagePreference : "";
+    if (policy) noteParts.push(FACTORY_OVERAGE[policy] || `超额策略：${policy}`);
+    const extraCents = strictNum(v.extraUsageBalanceCents);
+    if (extraCents !== null && extraCents > 0) {
+      noteParts.push(`Extra Usage 余额 $${(extraCents / 100).toFixed(2)}`);
+    }
+
+    return stateOk("factory", "Factory", {
+      windows,
+      detail: {
+        source: "factory.ai",
+        noteParts,
+        // 三个接入共用一个账号。这不是「多账号聚合估算」，是同一个订阅，
+        // 说清楚能省掉「为什么三个数字一样」的疑问。
+        aggregationNote: "Droid Core / Claude / GPT 三个接入共用同一订阅账号",
+      },
     });
   },
 };
@@ -498,6 +608,7 @@ const ADAPTERS = [
   arkAdapter,
   makeWorkbuddyAdapter("cn", "workbuddy", "WorkBuddy", ["workbuddy", "codebuddy", "workbuddy2api"]),
   makeWorkbuddyAdapter("global", "workbuddy-global", "WorkBuddy 全球", ["workbuddy-global", "workbuddy-global-api"]),
+  factoryAdapter,
   opencodexAdapter,
 ];
 

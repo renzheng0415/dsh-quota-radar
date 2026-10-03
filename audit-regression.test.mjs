@@ -740,6 +740,175 @@ test("WorkBuddy 走代理别名接入时，账号归属提醒进入数据结构"
 });
 
 // ===============================================================
+// Factory（Droid）额度
+// ===============================================================
+// DSH 里 factory-g / factory-a / factory-o 是三条 route，但共用一个
+// Factory 订阅账号，额度是账号级的。适配器必须合并成一行——
+// 否则同样三个数字会并排显示三遍。
+
+/** 造一份 Factory 账单返回。窗口传 undefined 表示该窗口缺失。 */
+function factoryPayload({ standard = {}, core = {}, top = {} } = {}) {
+  const win = (p) =>
+    p === undefined || p === null
+      ? undefined
+      : { usedPercent: p, windowEnd: "2026-10-03T17:20:04.701Z", secondsRemaining: 100 };
+  return {
+    ok: true,
+    value: {
+      fetchedAt: 1791030338948,
+      tokenRateLimits: true,
+      overagePreference: "droidCore",
+      extraUsageAllowed: true,
+      extraUsageBalanceCents: 0,
+      standard: {
+        fiveHour: win(standard.fiveHour ?? 8),
+        weekly: win(standard.weekly ?? 3),
+        monthly: win(standard.monthly ?? 2),
+      },
+      core: {
+        fiveHour: win(core.fiveHour ?? 0),
+        weekly: win(core.weekly ?? 0),
+        monthly: win(core.monthly ?? 0),
+      },
+      ...top,
+    },
+  };
+}
+
+test("Factory 三个 route 合并成一行：一个适配器服务 g/a/o", async () => {
+  const core = await loadHost();
+  const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+  assert.ok(adapter, "应存在 factory 适配器");
+  for (const route of ["factory-g", "factory-a", "factory-o"]) {
+    assert.ok(adapter.providers.includes(route), `${route} 应被这个适配器接管`);
+  }
+  // 一个适配器 = 一个缓存条目 = 一行。三条 route 不能各算一行。
+  assert.equal(core.ADAPTERS.filter((a) => a.providers.includes("factory-g")).length, 1);
+});
+
+test("Factory 读标准池的三个窗口，且不改动百分比原值", async () => {
+  const core = await loadHost();
+  const f = installFetch(() => jsonResponse(factoryPayload({ standard: { fiveHour: 8, weekly: 3, monthly: 2 } })));
+  try {
+    const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.equal(state.status, "ok");
+    assert.deepEqual(
+      state.windows.map((w) => [w.label, w.usedPercent]),
+      [["5h", 8], ["本周", 3], ["本月", 2]],
+    );
+    assert.ok(state.windows[0].resetsAt, "应带上窗口重置时刻");
+  } finally {
+    f.restore();
+  }
+});
+
+test("Factory Core 池没用到时不显示，用到了才显示", async () => {
+  const core = await loadHost();
+  const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+
+  const idle = installFetch(() => jsonResponse(factoryPayload()));
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.deepEqual(
+      state.windows.map((w) => w.label),
+      ["5h", "本周", "本月"],
+      "Core 池全 0 时不该补三行 0% 噪音",
+    );
+  } finally {
+    idle.restore();
+  }
+
+  const busy = installFetch(() => jsonResponse(factoryPayload({ core: { fiveHour: 41, weekly: 7 } })));
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.deepEqual(
+      state.windows.map((w) => w.label),
+      ["5h", "本周", "本月", "Core 5h", "Core 本周", "Core 本月"],
+      "Core 池有消耗时必须显示出来",
+    );
+    assert.equal(state.windows[3].usedPercent, 41);
+  } finally {
+    busy.restore();
+  }
+});
+
+test("Factory 未登录时给 unconfigured，并转述上游原因", async () => {
+  const core = await loadHost();
+  const f = installFetch(() =>
+    jsonResponse({ ok: false, code: "no-credential", message: "未检测到 Factory 登录态" }),
+  );
+  try {
+    const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    // 未登录不是上游故障，不该按指数退避压到 15 分钟
+    assert.equal(state.status, "unconfigured");
+    assert.match(state.message, /登录态/, "应转述上游给的具体原因");
+    assert.deepEqual(state.windows, []);
+  } finally {
+    f.restore();
+  }
+});
+
+test("Factory 超额策略翻译成人话，未知值照原样显示", async () => {
+  const core = await loadHost();
+  const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+
+  const known = installFetch(() => jsonResponse(factoryPayload()));
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.match(
+      state.detail.noteParts.join(" "),
+      /标准池用尽后自动走 Droid Core/,
+      "droidCore 这种内部枚举值不能直接甩给用户",
+    );
+  } finally {
+    known.restore();
+  }
+
+  const unknown = installFetch(() =>
+    jsonResponse(factoryPayload({ top: { overagePreference: "someNewPolicy" } })),
+  );
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.match(state.detail.noteParts.join(" "), /someNewPolicy/, "没见过的策略不能吞掉");
+  } finally {
+    unknown.restore();
+  }
+});
+
+test("Factory Extra Usage 余额为 0 时不显示，有钱才显示", async () => {
+  const core = await loadHost();
+  const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+
+  const zero = installFetch(() => jsonResponse(factoryPayload()));
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.doesNotMatch(state.detail.noteParts.join(" "), /Extra Usage/, "余额 0 不是有用信息");
+  } finally {
+    zero.restore();
+  }
+
+  const paid = installFetch(() =>
+    jsonResponse(factoryPayload({ top: { extraUsageBalanceCents: 1234 } })),
+  );
+  try {
+    const state = await adapter.fetch({}, { getWebPort: () => 19387 });
+    assert.match(state.detail.noteParts.join(" "), /\$12\.34/, "分要换算成元再显示");
+  } finally {
+    paid.restore();
+  }
+});
+
+test("Factory 宿主端口未知时不瞎猜地址", async () => {
+  const core = await loadHost();
+  const adapter = core.ADAPTERS.find((a) => a.id === "factory");
+  const state = await adapter.fetch({}, {});
+  assert.equal(state.status, "error");
+  assert.match(state.message, /端口/);
+});
+
+// ===============================================================
 // P2-3 OpenCodex 陈旧与不完整数据
 // ===============================================================
 
@@ -1712,6 +1881,72 @@ test("展开总览按用户指定的固定顺序排列", async () => {
         "zeta", // 其余往后排
         "unadapted:agnes", // 没有额度接口的排最后
       ],
+      `实际顺序: ${ids.join(" → ")}`,
+    );
+  } finally {
+    env.restore();
+  }
+});
+
+test("用 Factory 的任一条 route 都显示 Factory 额度", async () => {
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("factory", "Factory", ["factory-g", "factory-a", "factory-o"], {
+        windows: [
+          { label: "5h", usedPercent: 8, resetsAt: null },
+          { label: "本周", usedPercent: 3, resetsAt: null },
+          { label: "本月", usedPercent: 2, resetsAt: null },
+        ],
+        detail: {
+          source: "factory.ai",
+          noteParts: ["标准池用尽后自动走 Droid Core"],
+          aggregationNote: "Droid Core / Claude / GPT 三个接入共用同一订阅账号",
+        },
+      }),
+      stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "5h", usedPercent: 20 }] }),
+    ],
+    registered: ["ark", "factory-g", "factory-a", "factory-o"],
+  });
+  // 三条 route 走的是同一个 Factory 订阅账号，选哪条都该看到同一份额度。
+  // 少接一条 route，用那条 route 的会话就会整行空白。
+  for (const route of ["factory-g", "factory-a", "factory-o"]) {
+    const env = await renderWith(payload, { route });
+    try {
+      const all = textOf(env.tree);
+      assert.match(all, /Factory/, `选中 ${route} 时应显示 Factory`);
+      assert.doesNotMatch(all, /Ark/, `选中 ${route} 时不该显示 Ark`);
+      assert.equal(findAll(env.tree, byAttr("data-qr-main")).length, 1, "同一账号只能占一行");
+    } finally {
+      env.restore();
+    }
+  }
+});
+
+test("Factory 排在总览末尾：中转站之后、未适配之前", async () => {
+  const payload = snapshotPayload({
+    providers: [
+      // 未知服务故意放在 host 数组最前面。这是关键：不在名单里的服务
+      // 拿到的 rank 是 PANEL_ORDER.length，只有当 Factory 自己在名单里
+      // （rank 更小）时才会排在它前面。否则两者同 rank，按 host 原序排，
+      // 这条断言就会红——这正是我要它能抓到的回归。
+      stateFixture("zeta", "某新服务", ["zeta"]),
+      stateFixture("factory", "Factory", ["factory-g"]),
+      stateFixture("woyaopro", "WoYaoPro", ["woyaopro"]),
+      stateFixture("ark", "Ark", ["ark"]),
+      stateFixture("deepseek", "DeepSeek", ["deepseek"]),
+    ],
+    unadapted: ["agnes"],
+    registered: ["deepseek", "ark", "woyaopro", "factory-g", "zeta"],
+  });
+  const env = await renderWith(payload, { route: "deepseek" });
+  try {
+    const expanded = await env.click(findAll(env.tree, byAttr("data-qr-main"))[0]);
+    const ids = findAll(expanded, byAttr("data-qr-panel-row")).map(
+      (r) => r.props["data-qr-panel-row"],
+    );
+    assert.deepEqual(
+      ids,
+      ["deepseek", "ark", "woyaopro", "factory", "zeta", "unadapted:agnes"],
       `实际顺序: ${ids.join(" → ")}`,
     );
   } finally {

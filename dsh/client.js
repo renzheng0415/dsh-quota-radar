@@ -208,6 +208,7 @@ window.__ModuleLoader__.load({
       "workbuddy-global", // WorkBuddy 国际版
       "ark", // 火山方舟 Ark
       "woyaopro", // 第三方中转站（WoYaoPro）
+      "factory", // Factory（Droid）
     ];
 
     function orderedForPanel(providers) {
