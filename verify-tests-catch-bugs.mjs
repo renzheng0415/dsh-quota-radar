@@ -479,6 +479,34 @@ const mutations = [
     replace: "        // 忽略 routes 别名",
     testPattern: "用 Factory 的任一条 route",
   },
+  {
+    name: "弹层文字写死深色（亮色模式下白字浅底看不见）",
+    file: CLIENT,
+    find: '              React.createElement("span", { style: { color: "var(--dsw-alias-label-primary)" } }, panelSummaryOf(p)),',
+    replace: '              React.createElement("span", { style: { color: "var(--dsh-text, #eee)" } }, panelSummaryOf(p)),',
+    testPattern: "颜色全部跟随宿主主题",
+  },
+  {
+    name: "弹层底色写死深色（亮色模式下突兀的黑框）",
+    file: CLIENT,
+    find: '              background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2))",',
+    replace: '              background: "var(--dsh-surface, #1c1c1e)",',
+    testPattern: "颜色全部跟随宿主主题",
+  },
+  {
+    name: "弹层又加回 border（跟 elevation 描边叠成双线）",
+    file: CLIENT,
+    find: "              border: 0,",
+    replace: '              border: "1px solid var(--dsh-border, rgba(127,127,127,0.3))",',
+    testPattern: "颜色全部跟随宿主主题",
+  },
+  {
+    name: "读数颜色用宿主根本没有的变量（永远走写死的兜底）",
+    file: CLIENT,
+    find: '    const READOUT_COLOR = "var(--dsw-alias-label-tertiary)";',
+    replace: '    const READOUT_COLOR = "var(--dsh-text-muted, #888)";',
+    testPattern: "读数文字统一灰色",
+  },
 ];
 
 async function runPattern(pattern) {

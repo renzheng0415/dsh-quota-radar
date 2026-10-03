@@ -1540,7 +1540,12 @@ test("读数文字统一灰色，不再按用量变金色", async () => {
         /warning|danger|d29922|f85149/i,
         `${route} 不该出现警示色（实际 ${color}）`,
       );
-      assert.match(color, /text-muted/, `${route} 应该用宿主的次级文字色`);
+      assert.match(
+        color,
+        /var\(--dsw-alias-label-tertiary\)/,
+        `${route} 应该用宿主的次级文字色（这条断言原本写的是 --dsh-text-muted，` +
+          `而那个变量在宿主里根本不存在，等于在锁一个永远走兜底的错误写法）`,
+      );
     } finally {
       env.restore();
     }
@@ -1949,6 +1954,67 @@ test("Factory 排在总览末尾：中转站之后、未适配之前", async () 
       ["deepseek", "ark", "woyaopro", "factory", "zeta", "unadapted:agnes"],
       `实际顺序: ${ids.join(" → ")}`,
     );
+  } finally {
+    env.restore();
+  }
+});
+
+test("读数与弹层的颜色全部跟随宿主主题，不写死深色", async () => {
+  const payload = snapshotPayload({
+    providers: [
+      stateFixture("ark", "Ark", ["ark"], { windows: [{ label: "5h", usedPercent: 20 }] }),
+      stateFixture("deepseek", "DeepSeek", ["deepseek"], {
+        balance: { amount: 4.44, currency: "CNY", display: "¥4.44" },
+      }),
+    ],
+    unadapted: ["agnes"],
+    registered: ["ark", "deepseek", "agnes"],
+  });
+  const env = await renderWith(payload, { route: "ark" });
+  try {
+    const expanded = await env.click(findAll(env.tree, byAttr("data-qr-main"))[0]);
+    const styles = findAll(expanded, (n) => Boolean(n.props && n.props.style)).map(
+      (n) => n.props.style,
+    );
+    const flat = JSON.stringify(styles);
+
+    // 宿主里根本不存在的变量名。写上它只会走兜底，等于把颜色写死——
+    // 之前就是 var(--dsh-text, #eee) 这一路子，亮色模式下成了白字浅底。
+    for (const bogus of ["--dsh-text", "--dsh-surface", "--dsh-border", "--dsh-text-muted"]) {
+      assert.ok(!flat.includes(bogus), `样式里不该出现宿主不存在的变量 ${bogus}`);
+    }
+    // 深色模式专用的写死值
+    for (const dark of ["#eee", "#1c1c1e"]) {
+      assert.ok(!flat.includes(dark), `样式里不该写死深色模式的颜色 ${dark}`);
+    }
+
+    // 通用不变量：所有颜色属性都必须是主题变量引用。
+    // 这条不针对某个具体颜色，而是拦下「以后又写死一个颜色」这类回归——
+    // 上一版就是因为逐个写死，亮色模式下才整片看不见。
+    const COLOR_KEYS = ["color", "background", "backgroundColor", "borderColor"];
+    for (const style of styles) {
+      for (const [key, value] of Object.entries(style)) {
+        if (!COLOR_KEYS.includes(key) || typeof value !== "string") continue;
+        if (value === "transparent" || value === "inherit" || value === "none") continue;
+        assert.match(
+          value,
+          /var\(--dsw-/,
+          `样式 ${key} 必须引用宿主主题变量，不能写死颜色（实际 ${value}）`,
+        );
+      }
+    }
+
+    const panel = findAll(expanded, byAttr("data-qr-panel"))[0];
+    assert.ok(panel, "总览面板应渲染出来");
+    assert.match(panel.props.style.background, /var\(--dsw-/, "弹层底色必须跟随主题");
+    assert.match(panel.props.style.boxShadow, /var\(--dsw-/, "弹层阴影要用宿主的 elevation");
+    assert.equal(
+      panel.props.style.border,
+      0,
+      "描边由 elevation 的 stroke 提供，再加 border 会在亮色下显双线",
+    );
+    // 面板里的文字必须用主题的主文字色
+    assert.match(flat, /--dsw-alias-label-primary/, "正文要用主题的主文字色");
   } finally {
     env.restore();
   }

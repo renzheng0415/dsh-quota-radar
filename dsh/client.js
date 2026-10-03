@@ -300,7 +300,14 @@ window.__ModuleLoader__.load({
     }
 
     // 统一灰色，跟宿主的统计条保持一致。
-    const READOUT_COLOR = "var(--dsh-text-muted, #888)";
+    //
+    // 用宿主的 --dsw-alias-* 而不是自己写死颜色：这套变量每个都有亮/暗两套值
+    // （label-tertiary 亮色 #81858c、暗色 #adb2b8），主题切换由宿主负责。
+    //
+    // 这里曾经写的是 `var(--dsh-text-muted, #888)`——而 --dsh-text-muted 在宿主里
+    // 根本不存在，于是永远走 #888 兜底。同理，弹层里那几处 var(--dsh-text, #eee)
+    // 也都退回了深色模式专用的近白色，亮色模式下等于白字浅底。
+    const READOUT_COLOR = "var(--dsw-alias-label-tertiary)";
     const TONE_COLOR = {
       ok: READOUT_COLOR,
       muted: READOUT_COLOR,
@@ -595,7 +602,7 @@ window.__ModuleLoader__.load({
           {
             style: {
               fontWeight: 600,
-              color: "var(--dsh-text, #eee)",
+              color: "var(--dsw-alias-label-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
             },
@@ -631,11 +638,11 @@ window.__ModuleLoader__.load({
                   fontVariantNumeric: "tabular-nums",
                   whiteSpace: "nowrap",
                   color: TONE_COLOR[toneOf(p)],
-                  background: isCurrent ? "var(--dsh-surface-hover, rgba(127,127,127,0.12))" : "transparent",
+                  background: isCurrent ? "var(--dsw-alias-interactive-bg-hover)" : "transparent",
                 },
               },
               React.createElement("span", { style: { minWidth: 88, fontWeight: isCurrent ? 600 : 500 } }, shortLabel(p.label)),
-              React.createElement("span", { style: { color: "var(--dsh-text, #eee)" } }, panelSummaryOf(p)),
+              React.createElement("span", { style: { color: "var(--dsw-alias-label-primary)" } }, panelSummaryOf(p)),
               p.stale ? React.createElement("span", { style: { opacity: 0.6 } }, "⏱") : null,
             ),
           );
@@ -676,10 +683,16 @@ window.__ModuleLoader__.load({
               maxHeight: 320,
               overflowY: "auto",
               padding: "4px 0",
-              borderRadius: 6,
-              border: "1px solid var(--dsh-border, rgba(127,127,127,0.3))",
-              background: "var(--dsh-surface, #1c1c1e)",
-              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+              borderRadius: "var(--dsw-radius-lg, 8px)",
+              // 照抄宿主自己弹层的写法（.xRgRca_card）：描边由 elevation 的
+              // stroke 提供，这里再加 border 会在亮色下显出双线。
+              border: 0,
+              // 菜单底色自带毛玻璃，亮/暗各一套值，跟着主题走
+              background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2))",
+              backdropFilter: "var(--dsw-menu-backdrop-filter, none)",
+              boxShadow: "var(--dsw-elevation-prominent, 0 4px 16px rgba(0,0,0,0.15))",
+              // elevation 的描边颜色从这个局部变量读，宿主弹层也是这么注入的
+              "--dsw-elevation-stroke-color": "var(--dsw-alias-border-l1)",
               zIndex: 50,
             },
           },
