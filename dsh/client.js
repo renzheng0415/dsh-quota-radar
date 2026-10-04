@@ -654,7 +654,8 @@ window.__ModuleLoader__.load({
               // 数字不单独换个色阶。整块统一 label-secondary，层次靠字重，
               // 这样亮色下不会出现「一半深一半浅」的花脸读数。
               React.createElement("span", { style: { fontWeight: isCurrent ? 600 : 500 } }, panelSummaryOf(p)),
-              p.stale ? React.createElement("span", { style: { opacity: 0.6 } }, "⏱") : null,
+              // ⏱ 是「数据可能过期」的有信息量标记，跟读数行同理，不压暗。
+              p.stale ? React.createElement("span", null, "⏱") : null,
             ),
           );
         }

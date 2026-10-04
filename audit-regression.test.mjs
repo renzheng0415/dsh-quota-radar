@@ -2034,9 +2034,14 @@ test("读数行用可读的主题灰，不用最浅那一档，也不靠透明�
         windows: [{ label: "5h", usedPercent: 20 }],
         detail: { partial: true },
       }),
+      // 展开后的第二行带「数据可能过期」标记，用来覆盖弹层里的 ⏱。
+      stateFixture("deepseek", "DeepSeek", ["deepseek"], {
+        windows: [{ label: "5h", usedPercent: 10 }],
+        stale: true,
+      }),
     ],
     unadapted: ["agnes"],
-    registered: ["ark", "agnes"],
+    registered: ["ark", "deepseek", "agnes"],
   });
   const env = await renderWith(payload, { route: "ark" });
   try {
@@ -2048,7 +2053,8 @@ test("读数行用可读的主题灰，不用最浅那一档，也不靠透明�
       "读数行用次级灰（亮色 5.8:1、暗色 11.4:1）",
     );
 
-    const styles = findAll(env.tree, (n) => Boolean(n.props && n.props.style)).map(
+    const expanded = await env.click(main);
+    const styles = findAll(expanded, (n) => Boolean(n.props && n.props.style)).map(
       (n) => n.props.style,
     );
     const flat = JSON.stringify(styles);
@@ -2059,8 +2065,9 @@ test("读数行用可读的主题灰，不用最浅那一档，也不靠透明�
     //
     // 规则收紧到「只有装饰性箭头可以变淡」：0.6 这种阈值挡不住
     // 「把有信息量的字压到 0.7」——那同样是让用户看不清。
-    const inner = findAll(main, (n) => Boolean(n.props && n.props.style));
-    for (const n of inner) {
+    // 范围是整棵展开树，读数行和弹层都算，避免只修一半。
+    const all = findAll(expanded, (n) => Boolean(n.props && n.props.style));
+    for (const n of all) {
       const o = n.props.style.opacity;
       if (o === undefined) continue;
       const text = textOf(n);

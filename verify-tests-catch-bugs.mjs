@@ -528,6 +528,13 @@ const mutations = [
     replace: '        marks.length > 0 ? React.createElement("span", { style: { opacity: 0.7, flexShrink: 0 } }, marks.join("")) : null,',
     testPattern: "读数行用可读的主题灰",
   },
+  {
+    name: "弹层里的陈旧标记被压暗（只修读数行、漏了弹层）",
+    file: CLIENT,
+    find: '              p.stale ? React.createElement("span", null, "⏱") : null,',
+    replace: '              p.stale ? React.createElement("span", { style: { opacity: 0.6 } }, "⏱") : null,',
+    testPattern: "读数行用可读的主题灰",
+  },
 ];
 
 async function runPattern(pattern) {
