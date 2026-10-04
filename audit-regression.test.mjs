@@ -1542,9 +1542,10 @@ test("读数文字统一灰色，不再按用量变金色", async () => {
       );
       assert.match(
         color,
-        /var\(--dsw-alias-label-tertiary\)/,
-        `${route} 应该用宿主的次级文字色（这条断言原本写的是 --dsh-text-muted，` +
-          `而那个变量在宿主里根本不存在，等于在锁一个永远走兜底的错误写法）`,
+        /var\(--dsw-alias-label-secondary\)/,
+        `${route} 应该用宿主的次级文字色。这条断言修正过两次：最初锁的是 ` +
+          `--dsh-text-muted（宿主里不存在的变量，等于在保护错误写法），` +
+          `改成 label-tertiary 后又太白，最终定为 secondary`,
       );
     } finally {
       env.restore();
@@ -1977,7 +1978,6 @@ test("读数与弹层的颜色全部跟随宿主主题，不写死深色", async
       (n) => n.props.style,
     );
     const flat = JSON.stringify(styles);
-
     // 宿主里根本不存在的变量名。写上它只会走兜底，等于把颜色写死——
     // 之前就是 var(--dsh-text, #eee) 这一路子，亮色模式下成了白字浅底。
     for (const bogus of ["--dsh-text", "--dsh-surface", "--dsh-border", "--dsh-text-muted"]) {
@@ -2013,8 +2013,63 @@ test("读数与弹层的颜色全部跟随宿主主题，不写死深色", async
       0,
       "描边由 elevation 的 stroke 提供，再加 border 会在亮色下显双线",
     );
-    // 面板里的文字必须用主题的主文字色
-    assert.match(flat, /--dsw-alias-label-primary/, "正文要用主题的主文字色");
+    // 面板里的文字必须用主题的可读文字色
+    assert.match(flat, /--dsw-alias-label-secondary/, "正文要用主题的可读灰");
+  } finally {
+    env.restore();
+  }
+});
+
+test("读数行用可读的主题灰，不用最浅那一档，也不靠透明度压层次", async () => {
+  // 宿主的统计条用 label-tertiary，但那一档亮色下是 #81858c，
+  // 对白底只有 3.7:1，低于正文可读标准（4.5:1）。
+  // 读数是要看数字的地方，不能照抄统计条的等级。
+  const TOO_PALE = ["label-tertiary", "label-caption", "label-quaternary", "label-dimmed"];
+  const payload = snapshotPayload({
+    providers: [
+      // 样本必须真的带上「标记」和「箭头」，否则这两处的样式根本不会渲染，
+      // 针对它们的断言就成了空转——变异测试第一次跑就抓到了这个漏洞：
+      // 给标记加 opacity: 0.7 时测试照样全绿。
+      stateFixture("ark", "Ark", ["ark"], {
+        windows: [{ label: "5h", usedPercent: 20 }],
+        detail: { partial: true },
+      }),
+    ],
+    unadapted: ["agnes"],
+    registered: ["ark", "agnes"],
+  });
+  const env = await renderWith(payload, { route: "ark" });
+  try {
+    const main = findAll(env.tree, byAttr("data-qr-main"))[0];
+    assert.ok(main, "默认应渲染出读数行");
+    assert.match(
+      String(main.props.style.color),
+      /var\(--dsw-alias-label-secondary\)/,
+      "读数行用次级灰（亮色 5.8:1、暗色 11.4:1）",
+    );
+
+    const styles = findAll(env.tree, (n) => Boolean(n.props && n.props.style)).map(
+      (n) => n.props.style,
+    );
+    const flat = JSON.stringify(styles);
+    for (const tooPale of TOO_PALE) {
+      assert.ok(!flat.includes(tooPale), `读数不该用最浅的文字档 ${tooPale}`);
+    }
+    // 服务名曾经叠了 opacity: 0.8，把 3.7:1 又压到 2.7:1。
+    //
+    // 规则收紧到「只有装饰性箭头可以变淡」：0.6 这种阈值挡不住
+    // 「把有信息量的字压到 0.7」——那同样是让用户看不清。
+    const inner = findAll(main, (n) => Boolean(n.props && n.props.style));
+    for (const n of inner) {
+      const o = n.props.style.opacity;
+      if (o === undefined) continue;
+      const text = textOf(n);
+      assert.match(
+        text,
+        /^[▴▾]+$/,
+        `只有展开箭头可以变淡，有信息量的文字不行（这段是「${text}」，opacity ${o}）`,
+      );
+    }
   } finally {
     env.restore();
   }

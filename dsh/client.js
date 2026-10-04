@@ -67,7 +67,12 @@ window.__ModuleLoader__.load({
       whiteSpace: "nowrap",
       background: "none",
       border: "none",
-      color: "var(--dsw-alias-label-tertiary)",
+      // 这里刻意不设 color。
+      //
+      // 曾经写过 color: var(--dsw-alias-label-tertiary)，但两处调用点都是
+      // 「...PILL_STYLE 之后再显式给 color」，那行从来没生效过——是死代码，
+      // 还让变异测试误判成「改了颜色却没影响」。
+      // 颜色统一由 READOUT_COLOR / TONE_COLOR 决定（见下方注释）。
     };
 
     // ── 中英双语 ──────────────────────────────────────────────
@@ -302,12 +307,12 @@ window.__ModuleLoader__.load({
     // 统一灰色，跟宿主的统计条保持一致。
     //
     // 用宿主的 --dsw-alias-* 而不是自己写死颜色：这套变量每个都有亮/暗两套值
-    // （label-tertiary 亮色 #81858c、暗色 #adb2b8），主题切换由宿主负责。
+    // （label-secondary 亮色 #61666b、暗色 #cfd3d6），主题切换由宿主负责。
     //
     // 这里曾经写的是 `var(--dsh-text-muted, #888)`——而 --dsh-text-muted 在宿主里
-    // 根本不存在，于是永远走 #888 兜底。同理，弹层里那几处 var(--dsh-text, #eee)
-    // 也都退回了深色模式专用的近白色，亮色模式下等于白字浅底。
-    const READOUT_COLOR = "var(--dsw-alias-label-tertiary)";
+    // 根本不存在，于是永远走 #888 兜底；后来改成 label-tertiary，但那一档
+    // 亮色下只有 3.7:1 对比度，仍然偏浅。现在用 secondary（5.8:1）。
+    const READOUT_COLOR = "var(--dsw-alias-label-secondary)";
     const TONE_COLOR = {
       ok: READOUT_COLOR,
       muted: READOUT_COLOR,
@@ -594,7 +599,10 @@ window.__ModuleLoader__.load({
         },
         React.createElement(
           "span",
-          { style: { fontWeight: 500, opacity: 0.8, flexShrink: 0 } },
+          // 这里曾经有 opacity: 0.8。颜色已经是灰的，再压一层透明度会把
+          // 亮色下的对比度从 3.7:1 拉到 2.9:1，等于自己把可读性抹掉。
+          // 层次改由字重承担，不用透明度。
+          { style: { fontWeight: 500, flexShrink: 0 } },
           shortLabel(state.label),
         ),
         React.createElement(
@@ -602,16 +610,17 @@ window.__ModuleLoader__.load({
           {
             style: {
               fontWeight: 600,
-              color: "var(--dsw-alias-label-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
             },
           },
           summaryOf(state),
         ),
-        marks.length > 0 ? React.createElement("span", { style: { opacity: 0.7, flexShrink: 0 } }, marks.join("")) : null,
+        // 「部分」「⏱」这些是有信息量的文字，不是装饰，不压暗。
+        marks.length > 0 ? React.createElement("span", { style: { flexShrink: 0 } }, marks.join("")) : null,
+        // 展开箭头是装饰性提示，可以比正文淡一档，但不能淡到看不见。
         moreCount > 0
-          ? React.createElement("span", { style: { opacity: 0.5, flexShrink: 0 } }, open ? "▴" : "▾")
+          ? React.createElement("span", { style: { opacity: 0.6, flexShrink: 0 } }, open ? "▴" : "▾")
           : null,
       );
 
@@ -642,7 +651,9 @@ window.__ModuleLoader__.load({
                 },
               },
               React.createElement("span", { style: { minWidth: 88, fontWeight: isCurrent ? 600 : 500 } }, shortLabel(p.label)),
-              React.createElement("span", { style: { color: "var(--dsw-alias-label-primary)" } }, panelSummaryOf(p)),
+              // 数字不单独换个色阶。整块统一 label-secondary，层次靠字重，
+              // 这样亮色下不会出现「一半深一半浅」的花脸读数。
+              React.createElement("span", { style: { fontWeight: isCurrent ? 600 : 500 } }, panelSummaryOf(p)),
               p.stale ? React.createElement("span", { style: { opacity: 0.6 } }, "⏱") : null,
             ),
           );

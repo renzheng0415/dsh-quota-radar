@@ -480,10 +480,10 @@ const mutations = [
     testPattern: "用 Factory 的任一条 route",
   },
   {
-    name: "弹层文字写死深色（亮色模式下白字浅底看不见）",
+    name: "弹层行文字写死深色（亮色模式下白字浅底）",
     file: CLIENT,
-    find: '              React.createElement("span", { style: { color: "var(--dsw-alias-label-primary)" } }, panelSummaryOf(p)),',
-    replace: '              React.createElement("span", { style: { color: "var(--dsh-text, #eee)" } }, panelSummaryOf(p)),',
+    find: "                  color: TONE_COLOR[toneOf(p)],",
+    replace: '                  color: "#eee",',
     testPattern: "颜色全部跟随宿主主题",
   },
   {
@@ -503,9 +503,30 @@ const mutations = [
   {
     name: "读数颜色用宿主根本没有的变量（永远走写死的兜底）",
     file: CLIENT,
-    find: '    const READOUT_COLOR = "var(--dsw-alias-label-tertiary)";',
+    find: '    const READOUT_COLOR = "var(--dsw-alias-label-secondary)";',
     replace: '    const READOUT_COLOR = "var(--dsh-text-muted, #888)";',
     testPattern: "读数文字统一灰色",
+  },
+  {
+    name: "读数用最浅那一档灰（亮色下 3.7:1 看不清）",
+    file: CLIENT,
+    find: '    const READOUT_COLOR = "var(--dsw-alias-label-secondary)";',
+    replace: '    const READOUT_COLOR = "var(--dsw-alias-label-tertiary)";',
+    testPattern: "读数行用可读的主题灰",
+  },
+  {
+    name: "服务名叠透明度压暗（3.7:1 再压到 2.7:1）",
+    file: CLIENT,
+    find: "          { style: { fontWeight: 500, flexShrink: 0 } },",
+    replace: "          { style: { fontWeight: 500, opacity: 0.8, flexShrink: 0 } },",
+    testPattern: "读数行用可读的主题灰",
+  },
+  {
+    name: "有信息量的标记文字也被压暗（0.6 阈值挡不住那种）",
+    file: CLIENT,
+    find: '        marks.length > 0 ? React.createElement("span", { style: { flexShrink: 0 } }, marks.join("")) : null,',
+    replace: '        marks.length > 0 ? React.createElement("span", { style: { opacity: 0.7, flexShrink: 0 } }, marks.join("")) : null,',
+    testPattern: "读数行用可读的主题灰",
   },
 ];
 
